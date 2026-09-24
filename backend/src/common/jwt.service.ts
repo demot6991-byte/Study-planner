@@ -4,8 +4,6 @@ import jwt from 'jsonwebtoken';
 export interface JwtPayload {
   sub: string;
   email: string;
-  supabase_access_token: string;
-  supabase_refresh_token: string;
 }
 
 @Injectable()

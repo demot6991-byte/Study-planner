@@ -1,9 +1,22 @@
 import { Injectable } from '@nestjs/common';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseService } from '../common/supabase.service';
+
+const DAY_MAP: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
+function parseTimeRange(time: string): { start: string; end: string } {
+  const [start, end] = time.split('-');
+  return { start: start?.trim() || '', end: end?.trim() || '' };
+}
 
 @Injectable()
 export class SeedService {
-  async seedDefaultData(client: SupabaseClient, userId: string) {
+  constructor(private readonly supabaseService: SupabaseService) {}
+
+  async seedFromTemplate(userId: string, templateId?: string) {
+    const client = this.supabaseService.serviceClient;
+
     const { data: existingSettings } = await client
       .from('settings')
       .select('id')
@@ -14,10 +27,34 @@ export class SeedService {
       return { success: true, message: 'Already seeded' };
     }
 
+    let template: any = null;
+    if (templateId) {
+      const { data } = await client
+        .from('sample_templates')
+        .select('template_data')
+        .eq('id', templateId)
+        .maybeSingle();
+      template = data?.template_data;
+    } else {
+      const { data } = await client
+        .from('sample_templates')
+        .select('template_data')
+        .eq('is_default', true)
+        .maybeSingle();
+      template = data?.template_data;
+    }
+
+    if (!template) {
+      return { success: false, message: 'No template found' };
+    }
+
+    const t = template;
+    const profile = t.profile || {};
+
     await client.from('settings').insert({
       user_id: userId,
-      wake_time: '04:25',
-      sleep_time: '21:45',
+      wake_time: profile.timezone ? '04:25' : '04:25',
+      sleep_time: t.sleep_schedule?.sleep || '21:45',
       mass_time_start: '04:45',
       mass_time_end: '06:00',
       breakfast_start: '06:00',
@@ -36,51 +73,122 @@ export class SeedService {
       study_block2_start: '14:30',
       study_block2_end: '16:25',
       self_study_start: '19:30',
-      self_study_end: '21:20',
+      self_study_end: '21:10',
       session_duration_min: 45,
       break_duration_min: 10,
-      english_target_pct: 50,
-      journal_min_min: 15,
+      english_target_pct: t.goals?.english_ratio_target || 50,
+      journal_min_min: t.goals?.journal_min_minutes_per_day || 15,
     });
 
-    const activities = [
-      { name: 'Thánh lễ', start_time: '04:45', end_time: '06:00', category: 'prayer', icon: 'Church', sort_order: 1, user_id: userId },
-      { name: 'Ăn sáng', start_time: '06:00', end_time: '08:00', category: 'meal', icon: 'Coffee', sort_order: 2, user_id: userId },
-      { name: 'Ăn trưa', start_time: '11:30', end_time: '12:00', category: 'meal', icon: 'Utensils', sort_order: 3, user_id: userId },
-      { name: 'Ngủ trưa', start_time: '12:00', end_time: '13:45', category: 'rest', icon: 'Moon', sort_order: 4, user_id: userId },
-      { name: 'Thể thao', start_time: '16:30', end_time: '18:00', category: 'sports', icon: 'Dumbbell', sort_order: 5, user_id: userId },
-      { name: 'Ăn tối', start_time: '18:00', end_time: '18:45', category: 'meal', icon: 'Utensils', sort_order: 6, user_id: userId },
-      { name: 'Kinh tối', start_time: '19:15', end_time: '19:30', category: 'prayer', icon: 'Church', sort_order: 7, user_id: userId },
-    ];
-    await client.from('fixed_activities').insert(activities);
+    const fixedSchedule = t.fixed_daily_schedule || [];
+    const activities = fixedSchedule.map((item: any, idx: number) => ({
+      name: item.name,
+      start_time: item.start,
+      end_time: item.end,
+      category: item.type || 'fixed',
+      sort_order: idx + 1,
+      user_id: userId,
+    }));
+    if (activities.length > 0) {
+      await client.from('fixed_activities').insert(activities);
+    }
 
-    const subjects = [
-      { name: 'Tiếng Anh', code: 'english', color: '#3b82f6', icon_name: 'Languages', description: 'Tiếng Anh tổng hợp.', tags: ['ngôn ngữ', 'tự học'], show_in_nav: true, is_in_english_ratio: true, weekly_goal_min: 315, monthly_goal_min: 1260, sort_order: 1, user_id: userId },
-      { name: 'Việt văn', code: 'vietnamese', color: '#10b981', icon_name: 'PenLine', description: 'Tiếng Việt thực hành.', tags: ['ngôn ngữ', 'văn'], show_in_nav: true, is_in_english_ratio: true, weekly_goal_min: 105, monthly_goal_min: 420, sort_order: 2, user_id: userId },
-      { name: 'Đàn', code: 'instrument', color: '#f59e0b', icon_name: 'Music', description: 'Xướng âm, nhạc lý, kỹ thuật.', tags: ['âm nhạc'], show_in_nav: true, is_in_english_ratio: true, weekly_goal_min: 105, monthly_goal_min: 420, sort_order: 3, user_id: userId },
-      { name: 'Đọc sách', code: 'reading', color: '#8b5cf6', icon_name: 'BookMarked', description: 'Đọc sách cá nhân.', tags: ['đọc'], show_in_nav: true, is_in_english_ratio: true, weekly_goal_min: 105, monthly_goal_min: 420, sort_order: 4, user_id: userId },
-      { name: 'Ôn bài / Bài tập', code: 'homework', color: '#ef4444', icon_name: 'GraduationCap', description: 'Ôn tập và làm bài tập.', tags: ['ôn tập'], show_in_nav: false, is_in_english_ratio: false, weekly_goal_min: 210, monthly_goal_min: 840, sort_order: 5, user_id: userId },
-      { name: 'Nhật ký thiêng liêng', code: 'journal', color: '#ec4899', icon_name: 'Heart', description: 'Viết nhật ký phản tỉnh.', tags: ['thiêng liêng'], show_in_nav: true, is_in_english_ratio: false, weekly_goal_min: 105, monthly_goal_min: 420, sort_order: 6, user_id: userId },
-    ];
-    await client.from('study_subjects').insert(subjects);
+    const personalSubjects = t.personal_study_subjects || [];
+    const otherActivities = t.other_study_activities || [];
+    const allSubjects = [...personalSubjects, ...otherActivities];
 
-    const schedule = [
-      { weekday: 1, start_time: '08:00', end_time: '08:45', subject_name: 'Giáo lý HTCG 1', session_type: 'class', sort_order: 1, user_id: userId },
-      { weekday: 1, start_time: '08:50', end_time: '09:35', subject_name: 'Tiếng Anh', session_type: 'class', sort_order: 2, user_id: userId },
-      { weekday: 1, start_time: '09:40', end_time: '10:25', subject_name: 'Việt văn', session_type: 'class', sort_order: 3, user_id: userId },
-      { weekday: 2, start_time: '08:00', end_time: '08:45', subject_name: 'Đàn', session_type: 'class', sort_order: 1, user_id: userId },
-      { weekday: 2, start_time: '08:50', end_time: '09:35', subject_name: 'Tiếng Anh', session_type: 'class', sort_order: 2, user_id: userId },
-      { weekday: 3, start_time: '08:00', end_time: '08:45', subject_name: 'Giáo lý HTCG 2', session_type: 'class', sort_order: 1, user_id: userId },
-      { weekday: 3, start_time: '08:50', end_time: '09:35', subject_name: 'Việt văn', session_type: 'class', sort_order: 2, user_id: userId },
-      { weekday: 4, start_time: '08:00', end_time: '08:45', subject_name: 'Tiếng Anh', session_type: 'class', sort_order: 1, user_id: userId },
-      { weekday: 4, start_time: '08:50', end_time: '09:35', subject_name: 'Đàn', session_type: 'class', sort_order: 2, user_id: userId },
-      { weekday: 5, start_time: '08:00', end_time: '08:45', subject_name: 'Giáo lý HTCG 1', session_type: 'class', sort_order: 1, user_id: userId },
-      { weekday: 5, start_time: '08:50', end_time: '09:35', subject_name: 'Tiếng Anh', session_type: 'class', sort_order: 2, user_id: userId },
-      { weekday: 6, start_time: '08:00', end_time: '08:45', subject_name: 'Việt văn', session_type: 'class', sort_order: 1, user_id: userId },
-      { weekday: 0, start_time: '08:00', end_time: '08:45', subject_name: 'Giáo lý HTCG 2', session_type: 'class', sort_order: 1, user_id: userId },
-    ];
-    await client.from('schedule_entries').insert(schedule);
+    const subjectsToInsert = allSubjects.map((s: any, idx: number) => ({
+      name: s.name,
+      code: s.id,
+      color: this.getSubjectColor(s.id),
+      icon_name: this.getSubjectIcon(s.id),
+      is_in_english_ratio: (t.goals?.english_ratio_scope || []).includes(s.id),
+      weekly_goal_min: s.weekly_target_minutes || 0,
+      monthly_goal_min: s.monthly_target_minutes || 0,
+      sort_order: idx + 1,
+      user_id: userId,
+      show_in_nav: s.category !== 'academic',
+    }));
+    if (subjectsToInsert.length > 0) {
+      await client.from('study_subjects').insert(subjectsToInsert);
+    }
 
-    return { success: true, message: 'Data seeded successfully' };
+    const classSchedule = t.official_class_schedule || [];
+    const scheduleToInsert: any[] = [];
+    let sortOrder = 0;
+    for (const cls of classSchedule) {
+      const weekday = DAY_MAP[cls.day] ?? 1;
+      const { start, end } = parseTimeRange(cls.time);
+      sortOrder++;
+      scheduleToInsert.push({
+        weekday,
+        start_time: start,
+        end_time: end,
+        subject_name: cls.subject,
+        session_type: 'class',
+        teacher: cls.teacher || null,
+        week_pattern: cls.week_pattern || null,
+        period: cls.period || null,
+        sort_order: sortOrder,
+        user_id: userId,
+      });
+    }
+    if (scheduleToInsert.length > 0) {
+      await client.from('schedule_entries').insert(scheduleToInsert);
+    }
+
+    const planningRules = t.planning_rules || {};
+    const configKeys: Record<string, any> = {
+      goals: t.goals || {},
+      planning_rules: planningRules,
+      priority_rules: t.priority_rules || [],
+      weekly_personal_study_plan: t.weekly_personal_study_plan || {},
+      weekly_personal_study_target: t.weekly_personal_study_target || {},
+      evening_study_slots: t.evening_study_slots || [],
+      weekly_review: t.weekly_review || {},
+      monthly_review: t.monthly_review || {},
+      semester: t.semester || {},
+      sleep_schedule: t.sleep_schedule || {},
+    };
+
+    const configRows = Object.entries(configKeys).map(([key, value]) => ({
+      user_id: userId,
+      config_key: key,
+      config_value: value,
+    }));
+    if (configRows.length > 0) {
+      await client.from('user_config').insert(configRows);
+    }
+
+    await client
+      .from('users')
+      .update({ has_sample_data: true, onboarding_completed: true, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    return { success: true, message: 'Sample data imported successfully' };
+  }
+
+  private getSubjectColor(code: string): string {
+    const colors: Record<string, string> = {
+      english: '#3b82f6',
+      vietnamese_literature: '#10b981',
+      instrument: '#f59e0b',
+      reading: '#8b5cf6',
+      review_homework: '#ef4444',
+      spiritual_journal: '#ec4899',
+    };
+    return colors[code] || '#6b7280';
+  }
+
+  private getSubjectIcon(code: string): string {
+    const icons: Record<string, string> = {
+      english: 'Languages',
+      vietnamese_literature: 'PenLine',
+      instrument: 'Music',
+      reading: 'BookMarked',
+      review_homework: 'GraduationCap',
+      spiritual_journal: 'Heart',
+    };
+    return icons[code] || 'BookOpen';
   }
 }

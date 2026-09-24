@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase.service';
 import { JwtService } from '../common/jwt.service';
+import bcrypt from 'bcryptjs';
 
 @Injectable()
 export class AuthService {
@@ -9,120 +10,96 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async signUp(email: string, password: string) {
+  async signUp(email: string, password: string, name?: string) {
     if (!email || !password) {
-      throw new BadRequestException('Email and password required');
+      throw new BadRequestException('Email và mật khẩu là bắt buộc');
     }
-    const { data, error } = await this.supabaseService.client.auth.signUp({ email, password });
-    if (error) {
-      throw new BadRequestException(error.message);
+
+    const { data: existing } = await this.supabaseService.serviceClient
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (existing) {
+      throw new BadRequestException('Email đã được đăng ký');
     }
-    if (!data.session) {
-      return { user: { id: data.user.id, email: data.user.email || '' }, token: null };
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const { data, error } = await this.supabaseService.serviceClient
+      .from('users')
+      .insert({
+        email,
+        password_hash: passwordHash,
+        name: name || '',
+        academic_year: '2026-2027',
+        semester: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        week_starts_on: 'monday',
+        onboarding_completed: false,
+        has_sample_data: false,
+      })
+      .select('id, email, name, onboarding_completed, has_sample_data')
+      .single();
+
+    if (error || !data) {
+      throw new BadRequestException(error?.message || 'Không thể tạo tài khoản');
     }
-    const token = this.jwtService.sign({
-      sub: data.user.id,
-      email: data.user.email || '',
-      supabase_access_token: data.session.access_token,
-      supabase_refresh_token: data.session.refresh_token,
-    });
-    return {
-      user: { id: data.user.id, email: data.user.email || '' },
-      token,
-      session: {
-        access_token: data.session.access_token,
-        refresh_token: data.session.refresh_token,
-      },
-    };
+
+    const token = this.jwtService.sign({ sub: data.id, email: data.email });
+    return { user: data, token };
   }
 
   async signIn(email: string, password: string) {
     if (!email || !password) {
-      throw new BadRequestException('Email and password required');
+      throw new BadRequestException('Email và mật khẩu là bắt buộc');
     }
-    const { data, error } = await this.supabaseService.client.auth.signInWithPassword({ email, password });
-    if (error) {
-      throw new BadRequestException(error.message);
+
+    const { data, error } = await this.supabaseService.serviceClient
+      .from('users')
+      .select('id, email, name, password_hash, onboarding_completed, has_sample_data')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new BadRequestException('Email hoặc mật khẩu không đúng');
     }
-    const token = this.jwtService.sign({
-      sub: data.user.id,
-      email: data.user.email || '',
-      supabase_access_token: data.session.access_token,
-      supabase_refresh_token: data.session.refresh_token,
-    });
+
+    const valid = await bcrypt.compare(password, data.password_hash);
+    if (!valid) {
+      throw new BadRequestException('Email hoặc mật khẩu không đúng');
+    }
+
+    const token = this.jwtService.sign({ sub: data.id, email: data.email });
     return {
-      user: { id: data.user.id, email: data.user.email || '' },
-      token,
-      session: {
-        access_token: data.session.access_token,
-        refresh_token: data.session.refresh_token,
+      user: {
+        id: data.id,
+        email: data.email,
+        name: data.name,
+        onboarding_completed: data.onboarding_completed,
+        has_sample_data: data.has_sample_data,
       },
-    };
-  }
-
-  async refreshToken(refreshToken: string) {
-    if (!refreshToken) {
-      throw new BadRequestException('Refresh token required');
-    }
-    const result = await this.supabaseService.refreshSession(refreshToken);
-    if (!result) {
-      throw new UnauthorizedException('Invalid or expired refresh token');
-    }
-    const token = this.jwtService.sign({
-      sub: result.user.id,
-      email: result.user.email,
-      supabase_access_token: result.session.access_token,
-      supabase_refresh_token: result.session.refresh_token,
-    });
-    return {
-      user: result.user,
       token,
-      session: result.session,
     };
   }
 
-  async getGoogleUrl() {
-    const supabaseUrl = process.env.SUPABASE_URL || '';
-    const anonKey = process.env.SUPABASE_ANON_KEY || '';
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const callbackUrl = `${frontendUrl}/auth/callback`;
-    const params = new URLSearchParams({
-      client_id: anonKey,
-      redirect_uri: `${supabaseUrl}/auth/v1/callback`,
-      response_type: 'code',
-      scope: 'openid profile email',
-      flow: 'code',
-      state: callbackUrl,
-    });
-    return { url: `${supabaseUrl}/auth/v1/authorize?provider=google&${params.toString()}` };
+  async getSession(userId: string) {
+    const { data, error } = await this.supabaseService.serviceClient
+      .from('users')
+      .select('id, email, name, onboarding_completed, has_sample_data')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (error || !data) {
+      return { user: null };
+    }
+
+    return { user: data };
   }
 
-  async exchangeCodeForSession(code: string) {
-    if (!code) {
-      throw new BadRequestException('Authorization code required');
-    }
-    try {
-      const { data, error } = await this.supabaseService.client.auth.exchangeCodeForSession(code);
-      if (error || !data.session) {
-        throw new BadRequestException(error?.message || 'Failed to exchange code');
-      }
-      const token = this.jwtService.sign({
-        sub: data.user.id,
-        email: data.user.email || '',
-        supabase_access_token: data.session.access_token,
-        supabase_refresh_token: data.session.refresh_token,
-      });
-      return {
-        user: { id: data.user.id, email: data.user.email || '' },
-        token,
-        session: {
-          access_token: data.session.access_token,
-          refresh_token: data.session.refresh_token,
-        },
-      };
-    } catch (err: any) {
-      if (err instanceof BadRequestException) throw err;
-      throw new BadRequestException(err.message || 'Exchange failed');
-    }
+  async refreshToken(userId: string, email: string) {
+    const token = this.jwtService.sign({ sub: userId, email });
+    return { token };
   }
 }

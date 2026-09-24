@@ -1,14 +1,12 @@
 import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { JwtService } from './jwt.service';
-import { SupabaseService } from './supabase.service';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseService } from './supabase.service';
 
 export interface AuthedRequest extends Request {
   userId?: string;
   userEmail?: string;
-  supabaseAccessToken?: string;
-  supabaseRefreshToken?: string;
   userClient?: SupabaseClient;
 }
 
@@ -33,9 +31,7 @@ export class AuthMiddleware implements NestMiddleware {
 
     req.userId = payload.sub;
     req.userEmail = payload.email;
-    req.supabaseAccessToken = payload.supabase_access_token;
-    req.supabaseRefreshToken = payload.supabase_refresh_token;
-    req.userClient = this.supabaseService.createUserClient(payload.supabase_access_token);
+    req.userClient = this.supabaseService.getUserClient(payload.sub);
 
     next();
   }

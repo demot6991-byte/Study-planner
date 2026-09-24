@@ -11,8 +11,8 @@ export class AuthController {
   ) {}
 
   @Post('signup')
-  async signUp(@Body() body: { email: string; password: string }) {
-    return this.authService.signUp(body.email, body.password);
+  async signUp(@Body() body: { email: string; password: string; name?: string }) {
+    return this.authService.signUp(body.email, body.password, body.name);
   }
 
   @Post('signin')
@@ -26,31 +26,30 @@ export class AuthController {
   }
 
   @Post('refresh')
-  async refresh(@Body() body: { refresh_token: string }) {
-    return this.authService.refreshToken(body.refresh_token);
-  }
-
-  @Get('google-url')
-  async getGoogleUrl() {
-    return this.authService.getGoogleUrl();
-  }
-
-  @Post('google/callback')
-  async googleCallback(@Body() body: { code: string }) {
-    return this.authService.exchangeCodeForSession(body.code);
+  async refresh(@Req() req: Request) {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith('Bearer ')) {
+      return { error: 'Missing token' };
+    }
+    const token = header.substring(7);
+    const payload = this.jwtService.verify(token);
+    if (!payload) {
+      return { error: 'Invalid token' };
+    }
+    return this.authService.refreshToken(payload.sub, payload.email);
   }
 
   @Get('session')
   async getSession(@Req() req: Request) {
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {
-      return { user: null, session: null };
+      return { user: null };
     }
     const token = header.substring(7);
     const payload = this.jwtService.verify(token);
     if (!payload) {
-      return { user: null, session: null };
+      return { user: null };
     }
-    return { user: { id: payload.sub, email: payload.email } };
+    return this.authService.getSession(payload.sub);
   }
 }

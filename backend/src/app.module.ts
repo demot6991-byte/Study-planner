@@ -22,9 +22,9 @@ export class AppModule {
         { path: 'auth/signin', method: RequestMethod.POST },
         { path: 'auth/signout', method: RequestMethod.POST },
         { path: 'auth/refresh', method: RequestMethod.POST },
-        { path: 'auth/google-url', method: RequestMethod.GET },
-        { path: 'auth/google/callback', method: RequestMethod.POST },
         { path: 'auth/session', method: RequestMethod.GET },
+        { path: 'seed/templates', method: RequestMethod.GET },
+        { path: 'seed/template', method: RequestMethod.GET },
         { path: 'health', method: RequestMethod.GET },
       )
       .forRoutes('data', 'seed', 'auth/onboarding', ':table');

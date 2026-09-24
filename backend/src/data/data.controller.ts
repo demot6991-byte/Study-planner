@@ -1,10 +1,10 @@
 import { Controller, Get, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { DataService } from './data.service';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface DataRequest extends Request {
-  userClient?: SupabaseClient;
+  userClient?: any;
+  userId?: string;
 }
 
 @Controller('data')
@@ -13,7 +13,7 @@ export class DataController {
 
   @Get()
   async getAll(@Req() req: DataRequest) {
-    if (!req.userClient) return { error: 'Not authenticated' };
-    return this.dataService.loadAll(req.userClient);
+    if (!req.userClient || !req.userId) return { error: 'Not authenticated' };
+    return this.dataService.loadAll(req.userClient, req.userId);
   }
 }
